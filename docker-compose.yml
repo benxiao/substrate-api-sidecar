@@ -3,15 +3,15 @@ services:
   polkadot:
     container_name: polkadot
     image: docker.io/parity/polkadot:latest
-    volumes:
-      - ~/polkadot-data:/data
+    restart: unless-stopped
     # ports:
     #   - "9944:9944"
     command: '--chain polkadot --unsafe-ws-external --rpc-cors=all'
 
   sidecar:
-    # build: .
+    container_name: polkadot-sidecar
     image: docker.io/parity/substrate-api-sidecar:latest
+    restart: unless-stopped
     read_only: true
     ports:
       - "8080:8080"
