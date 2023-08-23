@@ -12,5 +12,9 @@ module.exports = {
 		}
 	},
 	testEnvironment: 'node',
+	maxConcurrency: 3,
+	maxWorkers: '50%',
 	testPathIgnorePatterns: ['/build/', '/node_modules/', '/docs/', '/e2e-tests/'],
+	// The below resolves `jest-haste-map: Haste module naming collision: @substrate/api-sidecar`
+	modulePathIgnorePatterns: ['/build']
 };

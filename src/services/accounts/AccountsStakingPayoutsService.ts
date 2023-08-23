@@ -1,10 +1,26 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
 import { ApiDecoration } from '@polkadot/api/types';
 import {
 	DeriveEraExposure,
 	DeriveEraExposureNominating,
 } from '@polkadot/api-derive/staking/types';
-import { Option } from '@polkadot/types';
+import { Option, u32 } from '@polkadot/types';
 import {
 	BalanceOf,
 	BlockHash,
@@ -75,10 +91,20 @@ export class AccountsStakingPayoutsService extends AbstractService {
 		const { api } = this;
 		const historicApi = await api.at(hash);
 
-		const [{ number }, historyDepth] = await Promise.all([
-			api.rpc.chain.getHeader(hash),
-			historicApi.query.staking.historyDepth(),
-		]);
+		const { number } = await api.rpc.chain.getHeader(hash);
+
+		/**
+		 * Given https://github.com/polkadot-js/api/issues/5232,
+		 * polkadot-js, and substrate treats historyDepth as a consts. In order
+		 * to maintain historical integrity we need to make a check to cover both the
+		 * storage query and the consts.
+		 */
+		let historyDepth: u32;
+		if (historicApi.consts.staking.historyDepth) {
+			historyDepth = historicApi.consts.staking.historyDepth;
+		} else {
+			historyDepth = await historicApi.query.staking.historyDepth<u32>();
+		}
 
 		// Information is kept for eras in `[current_era - history_depth; current_era]`
 		if (depth > historyDepth.toNumber()) {

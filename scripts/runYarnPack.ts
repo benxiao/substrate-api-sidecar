@@ -1,3 +1,19 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { defaultSasBuildOpts, defaultSasPackOpts } from './config';
 import { killAll, launchProcess, setWsUrl } from './sidecarScriptApi';
 import { ProcsType, StatusCode } from './types';
@@ -25,7 +41,7 @@ const cleanup = async () => {
 		sasUnInstallPackOpts
 	);
 
-	if (sidecarUnInstallPack === Failed) {
+	if (sidecarUnInstallPack.code === Failed) {
 		console.error('UnInstalling sidecar package failed..');
 		console.error(
 			'Please uninstall the package using `yarn remove @substrate/api-sidecar`.'
@@ -44,7 +60,7 @@ const cleanup = async () => {
 	};
 	const deleteTarball = await launchProcess('rm', procs, sasDeleteTarballOpts);
 
-	if (deleteTarball === Failed) {
+	if (deleteTarball.code === Failed) {
 		console.error('Error deleting tarball.');
 		console.error(
 			'In order to delete tarball run: `rm -rf ./package.tgz` from the root directory of the repository.'
@@ -66,7 +82,7 @@ const main = async () => {
 	console.log('Building Sidecar');
 	const sidecarBuild = await launchProcess('yarn', procs, defaultSasBuildOpts);
 
-	if (sidecarBuild === Failed) {
+	if (sidecarBuild.code === Failed) {
 		console.error('Sidecar failed to build, exiting...');
 		killAll(procs);
 		process.exit(1);
@@ -78,7 +94,7 @@ const main = async () => {
 	console.log('Building Local Npm release of Sidecar.');
 	const sidecarPack = await launchProcess('yarn', procs, defaultSasPackOpts);
 
-	if (sidecarPack === Failed) {
+	if (sidecarPack.code === Failed) {
 		console.error('Sidecar failed to build an local npm tarball.');
 		killAll(procs);
 		process.exit(1);
@@ -99,7 +115,7 @@ const main = async () => {
 		sasInstallPackOpts
 	);
 
-	if (sidecarInstallPack === Failed) {
+	if (sidecarInstallPack.code === Failed) {
 		console.error('Installing the binary failed..');
 		killAll(procs);
 		process.exit(1);
@@ -122,7 +138,7 @@ const main = async () => {
 		sasStartPackOpts
 	);
 
-	if (sidecarStart === Success) {
+	if (sidecarStart.code === Success) {
 		console.log('Successful Release Build of Sidecar');
 		killAll(procs);
 		await cleanup();

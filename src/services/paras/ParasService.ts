@@ -1,5 +1,21 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiDecoration, QueryableModuleStorage } from '@polkadot/api/types';
-import { u32 } from '@polkadot/types';
+import { Bytes, u32 } from '@polkadot/types';
 import { Option, Vec } from '@polkadot/types/codec';
 import {
 	AccountId,
@@ -12,6 +28,7 @@ import {
 	ParaLifecycle,
 	WinningData,
 } from '@polkadot/types/interfaces';
+import { PolkadotPrimitivesV4CandidateReceipt } from '@polkadot/types/lookup';
 import { ITuple } from '@polkadot/types/types';
 import { BN_ZERO } from '@polkadot/util';
 import BN from 'bn.js';
@@ -25,6 +42,7 @@ import {
 	ILeaseInfo,
 	ILeasesCurrent,
 	IParas,
+	IParasHeaders,
 	LeaseFormatted,
 	ParaType,
 } from '../../types/responses';
@@ -344,7 +362,7 @@ export class ParasService extends AbstractService {
 			blockNumber = number.unwrap();
 
 			currentLeaseHolders = leaseEntries
-				.filter(([_k, leases]) => leases[0].isSome)
+				.filter(([_k, leases]) => leases[0]?.isSome)
 				.map(([key, _l]) => key.args[0]);
 		}
 
@@ -410,6 +428,53 @@ export class ParasService extends AbstractService {
 				height: number.unwrap().toString(10),
 			},
 			paras: await Promise.all(parasPromises),
+		};
+	}
+
+	/**
+	 * Get the heads of the included (backed or considered available) parachain candidates
+	 * at the specified block height or at the most recent finalized head otherwise.
+	 *
+	 * @param hash `BlockHash` to make call at
+	 */
+	async parasHead(hash: BlockHash, method: string): Promise<IParasHeaders> {
+		const { api } = this;
+		const historicApi = await api.at(hash);
+
+		const [{ number }, events] = await Promise.all([
+			api.rpc.chain.getHeader(hash),
+			historicApi.query.system.events(),
+		]);
+
+		const paraInclusion = events.filter((record) => {
+			return (
+				record.event.section === 'paraInclusion' &&
+				record.event.method === method
+			);
+		});
+
+		const paraHeaders: IParasHeaders = {};
+		paraInclusion.forEach(({ event }) => {
+			const { data } = event;
+			const paraData = data[0] as PolkadotPrimitivesV4CandidateReceipt;
+			const headerData = data[1] as Bytes;
+			const { paraHead, paraId } = paraData.descriptor;
+			const header = api.createType('Header', headerData);
+			const { parentHash, number, stateRoot, extrinsicsRoot, digest } = header;
+
+			paraHeaders[paraId.toString()] = Object.assign(
+				{},
+				{ hash: paraHead },
+				{ parentHash, number, stateRoot, extrinsicsRoot, digest }
+			);
+		});
+
+		return {
+			at: {
+				hash,
+				height: number.unwrap().toString(10),
+			},
+			...paraHeaders,
 		};
 	}
 

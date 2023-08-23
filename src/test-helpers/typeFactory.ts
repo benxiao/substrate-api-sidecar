@@ -1,3 +1,19 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
 import { StorageEntryBase } from '@polkadot/api/types';
 import { WsProvider } from '@polkadot/rpc-provider/ws';
@@ -5,7 +21,7 @@ import { Metadata } from '@polkadot/types';
 import { Option, StorageKey, Tuple, TypeRegistry, Vec } from '@polkadot/types';
 import {
 	Codec,
-	Constructor,
+	CodecClass,
 	InterfaceTypes,
 	Registry,
 } from '@polkadot/types/types';
@@ -75,7 +91,7 @@ export class TypeFactory {
 	 * 2. apiPromise.query.slots.leases
 	 */
 	storageKey(
-		index: number,
+		index: number | string,
 		indexType: keyof InterfaceTypes,
 		storageEntry: StorageEntryBase<'promise', GenericStorageEntryFunction>
 	): StorageKey {
@@ -88,7 +104,7 @@ export class TypeFactory {
 	optionOf<T extends Codec>(value: T): Option<T> {
 		return new Option<T>(
 			this.#registry,
-			value.constructor as Constructor<T>,
+			value.constructor as CodecClass<T>,
 			value
 		);
 	}
@@ -96,7 +112,7 @@ export class TypeFactory {
 	vecOf<T extends Codec>(items: T[]): Vec<T> {
 		const vector = new Vec<T>(
 			this.#registry,
-			items[0].constructor as Constructor<T>
+			items[0].constructor as CodecClass<T>
 		);
 
 		vector.push(...items);
@@ -106,7 +122,7 @@ export class TypeFactory {
 
 	tupleOf<T extends Codec>(
 		value: T[],
-		types: (Constructor | keyof InterfaceTypes)[]
+		types: (CodecClass | keyof InterfaceTypes)[]
 	): Tuple {
 		return new Tuple(this.#registry, types, value);
 	}

@@ -1,3 +1,19 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { Metadata } from '@polkadot/types';
 import { TypeRegistry } from '@polkadot/types';
 import { getSpecTypes } from '@polkadot/types-known';
@@ -7,7 +23,8 @@ import { polkadotMetadataRpcV29 } from '../metadata/polkadotV29Metadata';
 import { polkadotMetadataRpcV9110 } from '../metadata/polkadotV9110Metadata';
 import { polkadotMetadataRpcV9122 } from '../metadata/polkadotV9122Metadata';
 import { polkadotMetadataRpcV9190 } from '../metadata/polkadotV9190Metadata';
-
+import { polkadotMetadataRpcV9300 } from '../metadata/polkadotV9300Metadata';
+import { polkadotMetadataRpcV9370 } from '../metadata/polkadotV9370Metadata';
 /**
  * Create a type registry for Polkadot.
  * Useful for creating types in order to facilitate testing.
@@ -73,4 +90,17 @@ export const polkadotRegistryV9122 = createPolkadotRegistry(
 export const polkadotRegistryV9190 = createPolkadotRegistry(
 	9190,
 	polkadotMetadataRpcV9190
+);
+
+/**
+ * Polkadot v9300 TypeRegistry
+ */
+export const polkadotRegistryV9300 = createPolkadotRegistry(
+	9300,
+	polkadotMetadataRpcV9300
+);
+
+export const polkadotRegistryV9370 = createPolkadotRegistry(
+	9370,
+	polkadotMetadataRpcV9370
 );

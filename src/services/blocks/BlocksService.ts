@@ -1,35 +1,49 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
 import { ApiDecoration } from '@polkadot/api/types';
 import { extractAuthor } from '@polkadot/api-derive/type/util';
-import { Compact, GenericCall, Struct, u128, Vec } from '@polkadot/types';
+import { Compact, GenericCall, Option, Struct, Vec } from '@polkadot/types';
+import { GenericExtrinsic } from '@polkadot/types/extrinsic';
 import {
 	AccountId32,
-	Balance,
 	Block,
 	BlockHash,
 	BlockNumber,
 	DispatchInfo,
 	EventRecord,
-	Hash,
 	Header,
+	InclusionFee,
+	RuntimeDispatchInfo,
+	RuntimeDispatchInfoV1,
+	Weight,
+	WeightV1,
 } from '@polkadot/types/interfaces';
 import { AnyJson, Codec, Registry } from '@polkadot/types/types';
-import { AbstractInt } from '@polkadot/types-codec';
 import { u8aToHex } from '@polkadot/util';
 import { blake2AsU8a } from '@polkadot/util-crypto';
-import { CalcFee } from '@substrate/calc';
+import { calc_partial_fee } from '@substrate/calc';
+import BN from 'bn.js';
 import { BadRequest, InternalServerError } from 'http-errors';
 import LRU from 'lru-cache';
 
-import {
-	IPerClass,
-	isExtBaseWeightValue,
-	isPerClassValue,
-	WeightValue,
-} from '../../types/chains-config';
+import { QueryFeeDetailsCache } from '../../chains-config/cache';
 import {
 	IBlock,
-	ICalcFee,
 	IExtrinsic,
 	IExtrinsicIndex,
 	ISanitizedCall,
@@ -62,13 +76,15 @@ interface FetchBlockOptions {
 enum Event {
 	success = 'ExtrinsicSuccess',
 	failure = 'ExtrinsicFailed',
+	transactionPaidFee = 'TransactionFeePaid',
 }
 
 export class BlocksService extends AbstractService {
 	constructor(
 		api: ApiPromise,
 		private minCalcFeeRuntime: IOption<number>,
-		private blockStore: LRU<string, IBlock>
+		private blockStore: LRU<string, IBlock>,
+		private hasQueryFeeApi: QueryFeeDetailsCache
 	) {
 		super(api);
 	}
@@ -95,12 +111,19 @@ export class BlocksService extends AbstractService {
 		// Before making any api calls check the cache if the queried block exists
 		const isBlockCached = this.blockStore.get(hash.toString());
 
-		if (isBlockCached) {
+		if (isBlockCached && isBlockCached.finalized !== false) {
 			return isBlockCached;
 		}
 
-		const [{ block }, validators, events, finalizedHead] = await Promise.all([
+		const [
+			{ block },
+			{ specName, specVersion },
+			validators,
+			events,
+			finalizedHead,
+		] = await Promise.all([
 			api.rpc.chain.getBlock(hash),
+			api.rpc.state.getRuntimeVersion(hash),
 			this.fetchValidators(historicApi),
 			this.fetchEvents(historicApi),
 			queryFinalizedHead
@@ -165,25 +188,7 @@ export class BlocksService extends AbstractService {
 			};
 		}
 
-		let calcFee, specName, specVersion, weights;
-		if (this.minCalcFeeRuntime === null) {
-			// Don't bother with trying to create calcFee for a runtime where fee calcs are not supported
-			specVersion = -1;
-			specName = 'ERROR';
-			calcFee = undefined;
-		} else {
-			// This runtime supports fee calc
-			const createCalcFee = await this.createCalcFee(
-				api,
-				historicApi,
-				parentHash,
-				block
-			);
-			calcFee = createCalcFee.calcFee;
-			specName = createCalcFee.specName;
-			specVersion = createCalcFee.specVersion;
-			weights = createCalcFee.weights;
-		}
+		const previousBlockHash = await this.fetchPreviousBlockHash(number);
 
 		for (let idx = 0; idx < block.extrinsics.length; ++idx) {
 			if (!extrinsics[idx].paysFee || !block.extrinsics[idx].isSigned) {
@@ -197,9 +202,9 @@ export class BlocksService extends AbstractService {
 				continue;
 			}
 
-			if (calcFee === null || calcFee === undefined) {
+			if (this.minCalcFeeRuntime > specVersion.toNumber()) {
 				extrinsics[idx].info = {
-					error: `Fee calculation not supported for ${specVersion}#${specName}`,
+					error: `Fee calculation not supported for ${specVersion.toString()}#${specName.toString()}`,
 				};
 				continue;
 			}
@@ -229,7 +234,7 @@ export class BlocksService extends AbstractService {
 				continue;
 			}
 
-			// both ExtrinsicSuccess and ExtrinsicFailed events have DispatchInfo
+			// Both ExtrinsicSuccess and ExtrinsicFailed events have DispatchInfo
 			// types as their final arg
 			const weightInfo = completedData[
 				completedData.length - 1
@@ -243,47 +248,83 @@ export class BlocksService extends AbstractService {
 				continue;
 			}
 
-			// The Dispatch class used to key into `blockWeights.perClass`
-			// We set default to be normal.
-			let weightInfoClass: keyof IPerClass = 'normal';
-			if (weightInfo.class.isMandatory) {
-				weightInfoClass = 'mandatory';
-			} else if (weightInfo.class.isOperational) {
-				weightInfoClass = 'operational';
+			if (
+				!api.rpc.payment?.queryInfo &&
+				!api.call.transactionPaymentApi?.queryInfo
+			) {
+				extrinsics[idx].info = {
+					error: 'Rpc method payment::queryInfo is not available',
+				};
+
+				continue;
 			}
 
 			/**
-			 * `extrinsicBaseWeight` changed from using system.extrinsicBaseWeight => system.blockWeights.perClass[weightInfoClass].baseExtrinsic
-			 * in polkadot v0.8.27 due to this pr: https://github.com/paritytech/substrate/pull/6629 .
-			 * https://github.com/paritytech/substrate-api-sidecar/issues/393 .
-			 * https://github.com/polkadot-js/api/issues/2365
+			 * Grab the initial partialFee, and information required for calculating a partialFee
+			 * if queryFeeDetails is available in the runtime.
 			 */
-			// This makes the compiler happy for below type guards
-			let extrinsicBaseWeight;
-			if (isExtBaseWeightValue(weights)) {
-				extrinsicBaseWeight = weights.extrinsicBaseWeight;
-			} else if (isPerClassValue(weights)) {
-				extrinsicBaseWeight = weights.perClass[weightInfoClass]?.baseExtrinsic;
-			}
+			const {
+				class: dispatchClass,
+				partialFee,
+				weight,
+			} = await this.fetchQueryInfo(block.extrinsics[idx], previousBlockHash);
+			const versionedWeight = (weight as Weight).refTime
+				? (weight as Weight).refTime.unwrap()
+				: (weight as WeightV1);
 
-			if (!extrinsicBaseWeight) {
-				throw new InternalServerError('Could not find extrinsicBaseWeight');
-			}
-
-			const len = block.extrinsics[idx].encodedLength;
-			const weight = weightInfo.weight;
-
-			const partialFee = calcFee.calc_fee(
-				BigInt(weight.toString()),
-				len,
-				extrinsicBaseWeight
+			const transactionPaidFeeEvent = xtEvents.find(
+				({ method }) =>
+					isFrameMethod(method) && method.method === Event.transactionPaidFee
 			);
 
-			extrinsics[idx].info = api.createType('RuntimeDispatchInfo', {
-				weight,
-				class: weightInfo.class,
-				partialFee: partialFee,
-			});
+			let finalPartialFee = partialFee.toString(),
+				dispatchFeeType = 'preDispatch';
+			if (transactionPaidFeeEvent) {
+				finalPartialFee = transactionPaidFeeEvent.data[1].toString();
+				dispatchFeeType = 'fromEvent';
+			} else {
+				/**
+				 * Call queryFeeDetails. It may not be available in the runtime and will
+				 * error automatically when we try to call it. We cache the runtimes it will error so we
+				 * don't try to call it again given a specVersion.
+				 */
+				const doesQueryFeeDetailsExist = this.hasQueryFeeApi.hasQueryFeeDetails(
+					specVersion.toNumber()
+				);
+				if (doesQueryFeeDetailsExist === 'available') {
+					finalPartialFee = await this.fetchQueryFeeDetails(
+						block.extrinsics[idx],
+						previousBlockHash,
+						weightInfo.weight,
+						versionedWeight.toString()
+					);
+
+					dispatchFeeType = 'postDispatch';
+				} else if (doesQueryFeeDetailsExist === 'unknown') {
+					try {
+						finalPartialFee = await this.fetchQueryFeeDetails(
+							block.extrinsics[idx],
+							previousBlockHash,
+							weightInfo.weight,
+							versionedWeight.toString()
+						);
+						dispatchFeeType = 'postDispatch';
+						this.hasQueryFeeApi.setRegisterWithCall(specVersion.toNumber());
+					} catch {
+						this.hasQueryFeeApi.setRegisterWithoutCall(specVersion.toNumber());
+						console.warn(
+							'The error above is automatically emitted from polkadot-js, and can be ignored.'
+						);
+					}
+				}
+			}
+
+			extrinsics[idx].info = {
+				weight: weightInfo.weight,
+				class: dispatchClass,
+				partialFee: api.registry.createType('Balance', finalPartialFee),
+				kind: dispatchFeeType,
+			};
 		}
 
 		const response = {
@@ -304,6 +345,115 @@ export class BlocksService extends AbstractService {
 		this.blockStore.set(hash.toString(), response);
 
 		return response;
+	}
+
+	/**
+	 * Fetch `payment_queryFeeDetails`.
+	 *
+	 * @param ext
+	 * @param previousBlockHash
+	 * @param extrinsicSuccessWeight
+	 * @param estWeight
+	 */
+	private async fetchQueryFeeDetails(
+		ext: GenericExtrinsic,
+		previousBlockHash: BlockHash,
+		extrinsicSuccessWeight: Weight,
+		estWeight: string
+	): Promise<string> {
+		const { api } = this;
+		const apiAt = await api.at(previousBlockHash);
+
+		let inclusionFee;
+		if (apiAt.call.transactionPaymentApi.queryFeeDetails) {
+			const u8a = ext.toU8a();
+			const result = await apiAt.call.transactionPaymentApi.queryFeeDetails(
+				u8a,
+				u8a.length
+			);
+			inclusionFee = result.inclusionFee;
+		} else {
+			const result = await api.rpc.payment.queryFeeDetails(
+				ext.toHex(),
+				previousBlockHash
+			);
+			inclusionFee = result.inclusionFee;
+		}
+
+		const finalPartialFee = this.calcPartialFee(
+			extrinsicSuccessWeight,
+			estWeight,
+			inclusionFee
+		);
+
+		return finalPartialFee;
+	}
+
+	/**
+	 * Fetch `payment_queryInfo`.
+	 *
+	 * @param ext
+	 * @param previousBlockHash
+	 */
+	private async fetchQueryInfo(
+		ext: GenericExtrinsic,
+		previousBlockHash: BlockHash
+	): Promise<RuntimeDispatchInfo | RuntimeDispatchInfoV1> {
+		const { api } = this;
+		const apiAt = await api.at(previousBlockHash);
+		if (apiAt.call.transactionPaymentApi.queryInfo) {
+			const u8a = ext.toU8a();
+			return apiAt.call.transactionPaymentApi.queryInfo(u8a, u8a.length);
+		} else {
+			// fallback to rpc call
+			return api.rpc.payment.queryInfo(ext.toHex(), previousBlockHash);
+		}
+	}
+
+	/**
+	 * Retrieve the blockHash for the previous block to the one getting queried.
+	 * If the block is the geneisis hash it will return the same blockHash.
+	 *
+	 * @param blockNumber The blockId being queried
+	 */
+	private async fetchPreviousBlockHash(
+		blockNumber: Compact<BlockNumber>
+	): Promise<BlockHash> {
+		const { api } = this;
+
+		const num = blockNumber.toBn();
+		return num.isZero()
+			? await api.rpc.chain.getBlockHash(num)
+			: await api.rpc.chain.getBlockHash(num.sub(new BN(1)));
+	}
+
+	/**
+	 * Calculate the partialFee for an extrinsic. This uses `calc_partial_fee` from `@substrate/calc`.
+	 * Please reference the rust code in `@substrate/calc` too see docs on the algorithm.
+	 *
+	 * @param extrinsicSuccessWeight
+	 * @param estWeight
+	 * @param inclusionFee
+	 */
+	private calcPartialFee(
+		extrinsicSuccessWeight: Weight,
+		estWeight: string,
+		inclusionFee: Option<InclusionFee>
+	): string {
+		if (inclusionFee.isSome) {
+			const { baseFee, lenFee, adjustedWeightFee } = inclusionFee.unwrap();
+
+			return calc_partial_fee(
+				baseFee.toString(),
+				lenFee.toString(),
+				adjustedWeightFee.toString(),
+				estWeight.toString(),
+				extrinsicSuccessWeight.toString()
+			);
+		} else {
+			// When the inclusion fee isNone we are dealing with a unsigned extrinsic.
+			return '0';
+		}
 	}
 
 	/**
@@ -466,181 +616,6 @@ export class BlocksService extends AbstractService {
 			onInitialize,
 			onFinalize,
 		};
-	}
-
-	/**
-	 * Create calcFee from params or return `null` if calcFee cannot be created.
-	 *
-	 * @param api ApiPromise
-	 * @param historicApi ApiDecoration to use for runtime specific querying
-	 * @param parentHash Hash of the parent block
-	 * @param block Block which the extrinsic is from
-	 */
-	private async createCalcFee(
-		api: ApiPromise,
-		historicApi: ApiDecoration<'promise'>,
-		parentHash: Hash,
-		block: Block
-	): Promise<ICalcFee> {
-		const parentParentHash: Hash = await this.getParentParentHash(
-			api,
-			parentHash,
-			block
-		);
-
-		const version = await api.rpc.state.getRuntimeVersion(parentParentHash);
-
-		const specName = version.specName.toString();
-		const specVersion = version.specVersion.toNumber();
-
-		if (this.minCalcFeeRuntime && specVersion < this.minCalcFeeRuntime) {
-			return {
-				specVersion,
-				specName,
-			};
-		}
-
-		/**
-		 * This will remain using the original api.query.*.*.at to retrieve the multiplier
-		 * of the `parentHash` block.
-		 */
-		const multiplier =
-			await api.query.transactionPayment?.nextFeeMultiplier?.at(parentHash);
-
-		const perByte = this.getPerByte(historicApi);
-
-		const extrinsicBaseWeightExists =
-			historicApi.consts.system.extrinsicBaseWeight ||
-			historicApi.consts.system.blockWeights.perClass.normal.baseExtrinsic;
-		const { weightToFee } = historicApi.consts.transactionPayment;
-
-		if (!perByte || !extrinsicBaseWeightExists || !multiplier || !weightToFee) {
-			// This particular runtime version is not supported with fee calcs or
-			// does not have the necessay materials to build calcFee
-			return {
-				specVersion,
-				specName,
-			};
-		}
-
-		const coefficients = weightToFee.map((c) => {
-			return {
-				// Anything that could overflow Number.MAX_SAFE_INTEGER needs to be serialized
-				// to BigInt or string.
-				coeffInteger: c.coeffInteger.toString(10),
-				coeffFrac: c.coeffFrac.toNumber(),
-				degree: c.degree.toNumber(),
-				negative: c.negative,
-			};
-		});
-
-		const weights = this.getWeight(historicApi);
-
-		const calcFee = CalcFee.from_params(
-			coefficients,
-			multiplier.toString(10),
-			perByte.toString(10),
-			specName,
-			specVersion
-		);
-
-		return {
-			calcFee,
-			specName,
-			specVersion,
-			weights,
-		};
-	}
-
-	/**
-	 * Retrieve the PerByte integer used to calculate fees.
-	 * TransactionByteFee has been replaced with LengthToFee via runtime 9190.
-	 * https://github.com/paritytech/polkadot/pull/5028
-	 *
-	 * @param historicApi ApiDecoration to use for runtime specific querying
-	 */
-	private getPerByte(
-		historicApi: ApiDecoration<'promise'>
-	): Balance | u128 | null {
-		const { transactionPayment } = historicApi.consts;
-
-		if (transactionPayment?.transactionByteFee) {
-			return transactionPayment?.transactionByteFee as Balance;
-		}
-
-		if (transactionPayment?.lengthToFee) {
-			return transactionPayment?.lengthToFee.toArray()[0].coeffInteger;
-		}
-
-		return null;
-	}
-
-	/**
-	 * Get a formatted weight constant for the runtime corresponding to the given block hash.
-	 *
-	 * @param api ApiPromise
-	 * @param blockHash Hash of a block in the runtime to get the extrinsic base weight(s) for
-	 */
-	private getWeight(historicApi: ApiDecoration<'promise'>): WeightValue {
-		const {
-			consts: { system },
-		} = historicApi;
-
-		let weightValue;
-		if (system.blockWeights?.perClass) {
-			const { normal, operational, mandatory } = system.blockWeights.perClass;
-
-			const perClass = {
-				normal: {
-					baseExtrinsic: normal.baseExtrinsic.toBigInt(),
-				},
-				operational: {
-					baseExtrinsic: operational.baseExtrinsic.toBigInt(),
-				},
-				mandatory: {
-					baseExtrinsic: mandatory.baseExtrinsic.toBigInt(),
-				},
-			};
-
-			weightValue = { perClass };
-		} else if (system.extrinsicBaseWeight) {
-			weightValue = {
-				extrinsicBaseWeight: (
-					system.extrinsicBaseWeight as unknown as AbstractInt
-				).toBigInt(),
-			};
-		} else {
-			throw new InternalServerError(
-				'Could not find a extrinsic base weight in metadata'
-			);
-		}
-
-		return weightValue;
-	}
-
-	/**
-	 * The block where the runtime is deployed falsely proclaims it would
-	 * be already using the new runtime. This workaround therefore uses the
-	 * parent of the parent in order to determine the correct runtime under which
-	 * this block was produced.
-	 *
-	 * @param api ApiPromise to use for rpc call
-	 * @param parentHash Used to identify the runtime in a block
-	 * @param block Used to make sure we dont
-	 */
-	private async getParentParentHash(
-		api: ApiPromise,
-		parentHash: Hash,
-		block: Block
-	): Promise<Hash> {
-		let parentParentHash: Hash;
-		if (block.header.number.toNumber() > 1) {
-			parentParentHash = (await api.rpc.chain.getHeader(parentHash)).parentHash;
-		} else {
-			parentParentHash = parentHash;
-		}
-
-		return parentParentHash;
 	}
 
 	/**

@@ -1,3 +1,19 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
 import { ApiDecoration } from '@polkadot/api/types';
 import { DeriveEraExposure } from '@polkadot/api-derive/types';
@@ -42,10 +58,7 @@ import { AccountsStakingPayoutsService } from './AccountsStakingPayoutsService';
  */
 const era = polkadotRegistryV9122.createType('EraIndex', 532);
 
-const historyDepthAt = (): Promise<u32> =>
-	Promise.resolve().then(() => {
-		return polkadotRegistryV9122.createType('u32', 84);
-	});
+const historyDepthAt = polkadotRegistryV9122.createType('u32', 84);
 
 const erasRewardPointsAt = (
 	_eraIndex: EraIndex
@@ -109,12 +122,16 @@ const deriveEraExposure = (_eraIndex: EraIndex): Promise<DeriveEraExposure> =>
 
 const mockHistoricApi = {
 	registry: polkadotRegistryV9122,
+	consts: {
+		staking: {
+			historyDepth: historyDepthAt,
+		},
+	},
 	query: {
 		staking: {
 			ledger: ledgerAt,
 			erasRewardPoints: erasRewardPointsAt,
 			erasValidatorReward: erasValidatorRewardAt,
-			historyDepth: historyDepthAt,
 			erasValidatorPrefs: erasValidatorPrefsAt,
 			bonded: bondedAt,
 		},

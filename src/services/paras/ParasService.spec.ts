@@ -1,3 +1,19 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
 import { ApiDecoration } from '@polkadot/api/types';
 import { Option, Tuple, Vec } from '@polkadot/types';
@@ -10,6 +26,7 @@ import { sanitizeNumbers } from '../../sanitize/sanitizeNumbers';
 import { rococoMetadataV228 } from '../../test-helpers/metadata/rococoMetadata';
 import {
 	polkadotRegistry,
+	polkadotRegistryV9300,
 	rococoRegistry,
 } from '../../test-helpers/registries';
 import {
@@ -21,6 +38,9 @@ import {
 	defaultMockApi,
 	mockBlock789629,
 } from '../test-helpers/mock';
+import { eventsHex } from '../test-helpers/mock/paras/eventsHex';
+import parasHeadBackedCandidatesResponse from '../test-helpers/responses/paras/parasHeadBackedCandidates.json';
+import parasHeadIncludedCandidatesResponse from '../test-helpers/responses/paras/parasHeadIncludedCandidates.json';
 import { ParasService } from './ParasService';
 
 /**
@@ -252,6 +272,14 @@ const auctionsWinningsAt = () =>
 		return optionWinnings;
 	});
 
+/**
+ * Used for parachain ParasHeads
+ */
+const eventsAt = () =>
+	Promise.resolve().then(() =>
+		polkadotRegistryV9300.createType('Vec<FrameSystemEventRecord>', eventsHex)
+	);
+
 const historicApi = {
 	consts: {
 		auctions: {
@@ -279,6 +307,9 @@ const historicApi = {
 		},
 		slots: {
 			leases: slotsLeasesAt,
+		},
+		system: {
+			events: eventsAt,
 		},
 	},
 } as unknown as ApiDecoration<'promise'>;
@@ -616,6 +647,29 @@ describe('ParasService', () => {
 			expect(sanitizeNumbers(response)).toMatchObject(expectedResponse);
 
 			(historicApi.query.auctions.auctionInfo as unknown) = auctionsInfoAt;
+		});
+	});
+	describe('ParasService.parasHead', () => {
+		it('Should return the correct response for CandidateIncluded methods', async () => {
+			const response = await parasService.parasHead(
+				blockHash789629,
+				'CandidateIncluded'
+			);
+
+			expect(sanitizeNumbers(response)).toStrictEqual(
+				parasHeadIncludedCandidatesResponse
+			);
+		});
+
+		it('Should return the correct response for CandidateBacked methods', async () => {
+			const response = await parasService.parasHead(
+				blockHash789629,
+				'CandidateBacked'
+			);
+
+			expect(sanitizeNumbers(response)).toStrictEqual(
+				parasHeadBackedCandidatesResponse
+			);
 		});
 	});
 });

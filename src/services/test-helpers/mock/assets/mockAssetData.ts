@@ -1,3 +1,19 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import {
 	AssetApproval,
 	AssetDetails,
@@ -7,16 +23,16 @@ import {
 import { PalletAssetsAssetAccount } from '@polkadot/types/lookup';
 import { Option } from '@polkadot/types-codec/base';
 
-import { statemintV1 } from '../../../../test-helpers/metadata/statemintMetadata';
+import { assetHubPolkadotV1 } from '../../../../test-helpers/metadata/assetHubPolkadotMetadata';
 import { rococoRegistry } from '../../../../test-helpers/registries';
 import { createApiWithAugmentations } from '../../../../test-helpers/typeFactory';
 import { TypeFactory } from '../../../../test-helpers/typeFactory';
 
 /**
- * This mock data uses Statemint specVersion 1
+ * This mock data uses Asset Hub Polkadot specVersion 1
  */
-const statemintApiV1 = createApiWithAugmentations(statemintV1);
-const statemintTypeFactory = new TypeFactory(statemintApiV1);
+const assetHubPolkadotApiV1 = createApiWithAugmentations(assetHubPolkadotV1);
+const assetHubPolkadotTypeFactory = new TypeFactory(assetHubPolkadotApiV1);
 
 const falseBool = rococoRegistry.createType('bool', false);
 const trueBool = rococoRegistry.createType('bool', true);
@@ -57,22 +73,22 @@ const assetBalanceFactory = {
 	'30': assetBalanceObjThree as unknown as PalletAssetsAssetAccount,
 };
 
-const assetStorageKeyOne = statemintTypeFactory.storageKey(
+const assetStorageKeyOne = assetHubPolkadotTypeFactory.storageKey(
 	10,
 	'AssetId',
-	statemintApiV1.query.assets.asset
+	assetHubPolkadotApiV1.query.assets.asset
 );
 
-const assetStorageKeyTwo = statemintTypeFactory.storageKey(
+const assetStorageKeyTwo = assetHubPolkadotTypeFactory.storageKey(
 	20,
 	'AssetId',
-	statemintApiV1.query.assets.asset
+	assetHubPolkadotApiV1.query.assets.asset
 );
 
-const assetStorageKeyThree = statemintTypeFactory.storageKey(
+const assetStorageKeyThree = assetHubPolkadotTypeFactory.storageKey(
 	30,
 	'AssetId',
-	statemintApiV1.query.assets.asset
+	assetHubPolkadotApiV1.query.assets.asset
 );
 
 const assetsAccountKeysAt = () =>

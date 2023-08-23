@@ -1,5 +1,21 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
-import { Vec } from '@polkadot/types';
+import { GenericExtrinsic, Vec } from '@polkadot/types';
 import { Option } from '@polkadot/types/codec';
 import {
 	AccountId,
@@ -12,12 +28,14 @@ import {
 	SessionIndex,
 	StakingLedger,
 } from '@polkadot/types/interfaces';
+import BN from 'bn.js';
 
 import { polkadotMetadata } from '../../../test-helpers/metadata/metadata';
 import {
 	kusamaRegistry,
 	polkadotRegistry,
 } from '../../../test-helpers/registries';
+import { getPalletDispatchables } from '../mock/data/mockDispatchablesData';
 import {
 	balancesTransferValid,
 	blockHash789629,
@@ -25,6 +43,7 @@ import {
 	testAddressController,
 } from '.';
 import { localListenAddressesHex } from './data/localListenAddresses';
+import { getMetadata as mockMetaData } from './data/mockNonimationPoolResponseData';
 import traceBlockRPC from './data/traceBlock.json';
 
 const chain = () =>
@@ -130,17 +149,35 @@ const getBlockHashGenesis = (_zero: number) =>
 		)
 	);
 
-export const queryInfoBalancesTransfer = (
+const queryFeeDetails = () =>
+	Promise.resolve().then(() => {
+		const inclusionFee = polkadotRegistry.createType('Option<InclusionFee>', {
+			baseFee: 10000000,
+			lenFee: 143000000,
+			adjustedWeightFee: 20,
+		});
+		return polkadotRegistry.createType('FeeDetails', {
+			inclusionFee,
+		});
+	});
+
+const runtimeDispatchInfo = polkadotRegistry.createType('RuntimeDispatchInfo', {
+	weight: 195000000,
+	class: 'Normal',
+	partialFee: 149000000,
+});
+
+export const queryInfoCall = (
+	_extrinsic: GenericExtrinsic,
+	_length: Uint8Array
+): Promise<RuntimeDispatchInfo> =>
+	Promise.resolve().then(() => runtimeDispatchInfo);
+
+export const queryInfoAt = (
 	_extrinsic: string,
 	_hash: Hash
 ): Promise<RuntimeDispatchInfo> =>
-	Promise.resolve().then(() =>
-		polkadotRegistry.createType('RuntimeDispatchInfo', {
-			weight: 195000000,
-			class: 'Normal',
-			partialFee: 149000000,
-		})
-	);
+	Promise.resolve().then(() => runtimeDispatchInfo);
 
 export const submitExtrinsic = (_extrinsic: string): Promise<Hash> =>
 	Promise.resolve().then(() => polkadotRegistry.createType('Hash'));
@@ -208,9 +245,54 @@ const traceBlock = () =>
  */
 export const defaultMockApi = {
 	runtimeVersion,
+	call: {
+		transactionPaymentApi: {
+			queryInfo: queryInfoCall,
+			queryFeeDetails,
+		},
+	},
+	consts: {
+		system: {
+			blockLength: {
+				max: {
+					normal: new BN(3932160),
+					operational: new BN(5242880),
+					mandatory: new BN(5242880),
+				},
+			},
+			blockWeights: {
+				baseBlock: new BN(5481991000),
+				maxBlock: polkadotRegistry.createType('u64', 15),
+				perClass: {
+					normal: {
+						baseExtrinsic: new BN(85212000),
+						maxExtrinsic: new BN(1479914788000),
+						maxTotal: new BN(1500000000000),
+						reserved: new BN(0),
+					},
+					operational: {
+						baseExtrinsic: new BN(85212000),
+						maxExtrinsic: new BN(1979914788000),
+						maxTotal: new BN(2000000000000),
+						reserved: new BN(500000000000),
+					},
+					mandatory: {
+						baseExtrinsic: new BN(85212000),
+						maxExtrinsic: null,
+						maxTotal: null,
+						reserved: null,
+					},
+				},
+			},
+		},
+		transactionPayment: {
+			operationalFeeMultiplier: new BN(5),
+		},
+	},
 	createType: polkadotRegistry.createType.bind(polkadotRegistry),
 	registry: polkadotRegistry,
-	tx,
+
+	tx: getPalletDispatchables,
 	runtimeMetadata: polkadotMetadata,
 	rpc: {
 		chain: {
@@ -236,7 +318,8 @@ export const defaultMockApi = {
 			properties,
 		},
 		payment: {
-			queryInfo: queryInfoBalancesTransfer,
+			queryInfo: queryInfoAt,
+			queryFeeDetails,
 		},
 		author: {
 			submitExtrinsic,
@@ -247,6 +330,11 @@ export const defaultMockApi = {
 		chain: {
 			getHeader: deriveGetHeader,
 			getBlock: deriveGetBlock,
+		},
+	},
+	query: {
+		nominationPools: {
+			metadata: mockMetaData,
 		},
 	},
 } as unknown as ApiPromise;

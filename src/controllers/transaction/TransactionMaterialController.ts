@@ -1,7 +1,22 @@
+// Copyright 2017-2022 Parity Technologies (UK) Ltd.
+// This file is part of Substrate API Sidecar.
+//
+// Substrate API Sidecar is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import { ApiPromise } from '@polkadot/api';
 import { RequestHandler } from 'express';
 
-import { Log } from '../../logging/Log';
 import { TransactionMaterialService } from '../../services';
 import AbstractController from '../AbstractController';
 
@@ -54,12 +69,12 @@ export default class TransactionMaterialController extends AbstractController<Tr
 	 * @param res Express Response
 	 */
 	private getTransactionMaterial: RequestHandler = async (
-		{ query: { noMeta, at, metadata } },
+		{ query: { at, metadata } },
 		res
 	): Promise<void> => {
 		const hash = await this.getHashFromAt(at);
 
-		const metadataArg = this.parseMetadataArgs(noMeta, metadata);
+		const metadataArg = this.parseMetadataArgs(metadata);
 
 		TransactionMaterialController.sanitizedSend(
 			res,
@@ -73,10 +88,7 @@ export default class TransactionMaterialController extends AbstractController<Tr
 	 * @param noMeta
 	 * @param metadata
 	 */
-	private parseMetadataArgs(
-		noMeta: unknown,
-		metadata: unknown
-	): MetadataOpts | false {
+	private parseMetadataArgs(metadata: unknown): MetadataOpts | false {
 		/**
 		 * Checks to see if the `metadata` query param is inputted, if it isnt,
 		 * it will default to the old behavior. This is to be removed once after
@@ -90,24 +102,11 @@ export default class TransactionMaterialController extends AbstractController<Tr
 					return 'scale';
 				default:
 					throw new Error(
-						'Invalid inputted value for the `metadata` query param.'
+						'Invalid inputted value for the `metadata` query param. Options are `scale` or `json`.'
 					);
 			}
 		}
 
-		if (noMeta) {
-			Log.logger.warn(
-				'`noMeta` query param will be deprecated in sidecar v13, and replaced with `metadata` please migrate'
-			);
-			switch (noMeta) {
-				case 'true':
-					return false;
-				case 'false':
-					return 'scale';
-			}
-		}
-
-		// default behavior until `noMeta` is deprecated, then false will be default
-		return 'scale';
+		return false;
 	}
 }
